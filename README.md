@@ -15,7 +15,7 @@ docker compose run --rm api python -m workstream.seed
 
 The API and OpenAPI UI are at <http://localhost:8000> and <http://localhost:8000/docs>. Mailpit is at <http://localhost:8025>. Liveness, readiness, and Prometheus metrics are exposed at `/health/live`, `/health/ready`, and `/metrics`.
 
-Local demo accounts use password `DemoPassword123!`: `owner@demo.local`, `member@demo.local`, and `viewer@demo.local`. These are seed data, never application defaults.
+Local demo accounts use password `DemoPassword123!`: `owner@demo.example.com`, `member@demo.example.com`, and `viewer@demo.example.com`. These are seed data, never application defaults.
 
 ## Operations
 

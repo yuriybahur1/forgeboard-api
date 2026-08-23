@@ -6,6 +6,12 @@ from workstream.core.security import hash_password
 from workstream.db.session import sync_session_factory
 from workstream.modules.models import Comment, Issue, Label, Membership, Organization, Project, User
 
+DEMO_USER_EMAILS = (
+    "owner@demo.example.com",
+    "member@demo.example.com",
+    "viewer@demo.example.com",
+)
+
 
 def uid(name: str) -> UUID:
     return uuid5(NAMESPACE_DNS, f"workstream.local/{name}")
@@ -13,24 +19,24 @@ def uid(name: str) -> UUID:
 
 def main() -> None:
     with sync_session_factory.begin() as db:
-        if db.scalar(select(User.id).where(User.email == "owner@demo.local")):
+        if db.scalar(select(User.id).where(User.email == DEMO_USER_EMAILS[0])):
             return
         users = [
             User(
                 id=uid("owner"),
-                email="owner@demo.local",
+                email=DEMO_USER_EMAILS[0],
                 display_name="Olivia Owner",
                 password_hash=hash_password("DemoPassword123!"),
             ),
             User(
                 id=uid("member"),
-                email="member@demo.local",
+                email=DEMO_USER_EMAILS[1],
                 display_name="Morgan Member",
                 password_hash=hash_password("DemoPassword123!"),
             ),
             User(
                 id=uid("viewer"),
-                email="viewer@demo.local",
+                email=DEMO_USER_EMAILS[2],
                 display_name="Val Viewer",
                 password_hash=hash_password("DemoPassword123!"),
             ),
