@@ -1,0 +1,69 @@
+import logging
+import re
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any
+from uuid import uuid4
+
+import structlog
+from fastapi import Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+
+REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "route", "status_class"])
+LATENCY = Histogram("http_request_duration_seconds", "HTTP latency", ["method", "route"])
+SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def configure_logging(json: bool) -> None:
+    processors: list[Any] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer(),
+    ]
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        logger_factory=structlog.PrintLoggerFactory(),
+    )
+
+
+async def request_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    candidate = request.headers.get("x-request-id", "")
+    request_id = candidate if SAFE_REQUEST_ID.fullmatch(candidate) else str(uuid4())
+    request.state.request_id = request_id
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        structlog.get_logger().exception(
+            "unhandled_request_exception", method=request.method, path=request.url.path
+        )
+        raise
+    finally:
+        structlog.contextvars.clear_contextvars()
+    route = getattr(request.scope.get("route"), "path", "unmatched")
+    duration = time.perf_counter() - started
+    REQUESTS.labels(request.method, route, f"{response.status_code // 100}xx").inc()
+    LATENCY.labels(request.method, route).observe(duration)
+    response.headers["X-Request-ID"] = request_id
+    structlog.get_logger().info(
+        "request_complete",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        route=route,
+        status_code=response.status_code,
+        duration_ms=round(duration * 1000, 2),
+    )
+    return response
+
+
+def metrics_response() -> Response:
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

@@ -1,0 +1,7 @@
+Hello,
+
+Complete this Workstream action using the following link:
+{{ action_url }}
+
+If you did not request this action, ignore this message.
+
