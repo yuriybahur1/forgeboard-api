@@ -22,7 +22,7 @@ test:
 test-unit:
 	uv run pytest -m unit
 test-integration:
-	uv run pytest -m integration
+	uv run pytest -m "integration and not concurrency"
 test-concurrency:
 	uv run pytest -m concurrency
 lint:

@@ -1,6 +1,6 @@
 # Architecture
 
-Workstream is a domain-oriented modular monolith. FastAPI owns the async request path; SQLAlchemy `AsyncSession` instances are request scoped. Routers invoke explicit workflows and own commit boundaries. Query helpers never commit. Tenant-owned rows are selected with organization scope, and non-members receive 404 to avoid confirming cross-tenant resource existence.
+Workstream is a domain-oriented modular monolith. FastAPI owns the async request path; SQLAlchemy `AsyncSession` instances are request scoped. Project, issue, label, comment, notification, audit, organization, and authentication routers are HTTP adapters around domain services and focused read queries. Services own multi-write commit boundaries; repositories and query helpers never commit. SQLAlchemy models live with their domains, while `workstream.modules.models` is only the deliberate model-import aggregator used by Alembic and compatibility imports. Tenant-owned rows are selected with organization scope, and non-members receive 404 to avoid confirming cross-tenant resource existence.
 
 Access JWTs are short-lived and reference a stable logical session family. Rotated refresh credentials are separate rows hidden from session listings; reuse revokes the entire logical session. Current logout revokes only the JWT's session, while global logout revokes all families. Verification, reset, and invitation tokens are one-time hashed records.
 
@@ -11,3 +11,5 @@ Business mutations and outbox events commit together. Celery beat invokes dispat
 The Redis Lua limiter protects login, password-reset request, verification resend, and invitation creation. Keys contain a hashed account identifier and direct peer address. Security-sensitive operations fail closed with a sanitized 503 if Redis is unavailable; readiness also reports Redis degradation.
 
 Request IDs live in structlog context variables and are cleared after each request. HTTP metrics use normalized route templates and status classes. Readiness checks PostgreSQL and Redis with deadlines and returns per-dependency state; liveness has no external dependency.
+
+The test harness migrates an empty PostgreSQL database through Alembic. CI supplies explicit PostgreSQL and Redis URLs; local integration runs use Testcontainers when those URLs are absent. Concurrency tests use independent sessions and committed transactions. Issue, comment, notification, and audit collections use `(created_at, id)` keyset cursors.

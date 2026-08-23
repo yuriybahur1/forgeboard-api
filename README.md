@@ -22,3 +22,5 @@ Local demo accounts use password `DemoPassword123!`: `owner@demo.local`, `member
 Compose runs an explicit one-shot migration service before starting the API and workers. `make migrate` upgrades a host-configured database; `make migration m="description"` creates a revision and `make downgrade` rolls back one revision. `make test`, `make test-unit`, `make test-integration`, `make test-concurrency`, `make lint`, `make typecheck`, `make audit`, and `make ci` run verification. `make down` stops the stack.
 
 Architecture details and decisions are in [docs/architecture.md](docs/architecture.md) and [docs/adr](docs/adr).
+
+Integration tests use `WORKSTREAM_TEST_DATABASE_URL`, `WORKSTREAM_TEST_ASYNC_DATABASE_URL`, and `WORKSTREAM_TEST_REDIS_URL` when set. Otherwise they start isolated PostgreSQL and Redis instances through Testcontainers. Schemas are always built with Alembic; SQLite and ORM `create_all()` are not used.

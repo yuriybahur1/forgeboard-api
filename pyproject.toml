@@ -29,6 +29,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "SIM", "RUF"]
 ignore = ["S101"]
 [tool.ruff.lint.per-file-ignores]
 "migrations/versions/*.py" = ["E501"]
+"tests/**/*.py" = ["S105", "S106", "S107"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -41,7 +42,7 @@ disallow_untyped_decorators = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--strict-markers --cov=workstream --cov-report=term-missing --cov-fail-under=60"
+addopts = "--strict-markers --cov=workstream --cov-report=term-missing --cov-fail-under=80"
 markers = [
   "unit: isolated unit tests",
   "integration: PostgreSQL or Redis integration tests",

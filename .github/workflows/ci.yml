@@ -22,6 +22,9 @@ jobs:
       WORKSTREAM_DATABASE_URL: postgresql+psycopg://workstream:workstream@localhost:5432/workstream_test
       WORKSTREAM_ASYNC_DATABASE_URL: postgresql+psycopg_async://workstream:workstream@localhost:5432/workstream_test
       WORKSTREAM_REDIS_URL: redis://localhost:6379/0
+      WORKSTREAM_TEST_DATABASE_URL: postgresql+psycopg://workstream:workstream@localhost:5432/workstream_test
+      WORKSTREAM_TEST_ASYNC_DATABASE_URL: postgresql+psycopg_async://workstream:workstream@localhost:5432/workstream_test
+      WORKSTREAM_TEST_REDIS_URL: redis://localhost:6379/1
       WORKSTREAM_JWT_SECRET: test-only-secret-with-at-least-32-characters
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +36,9 @@ jobs:
       - run: uv run mypy
       - run: uv run alembic upgrade head
       - run: uv run alembic check
-      - run: uv run pytest --cov-fail-under=55
+      - run: uv run pytest -m unit --no-cov
+      - run: uv run pytest -m "integration and not concurrency" --no-cov
+      - run: uv run pytest -m concurrency --no-cov
+      - run: uv run pytest --cov-fail-under=80
       - run: uv run pip-audit
       - run: docker build .

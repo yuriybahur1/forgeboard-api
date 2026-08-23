@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import structlog
@@ -12,6 +12,20 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "route", "status_class"])
 LATENCY = Histogram("http_request_duration_seconds", "HTTP latency", ["method", "route"])
 SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+SECRET_PATTERN = re.compile(r"(?i)(password|token|authorization|cookie)(\s*[=:]\s*)([^\s,;&]+)")
+
+
+def redact_secrets(_: object, __: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    def redact(value: Any) -> Any:
+        if isinstance(value, str):
+            return SECRET_PATTERN.sub(r"\1\2[REDACTED]", value)
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(redact(item) for item in value)
+        return value
+
+    return cast(dict[str, Any], redact(event_dict))
 
 
 def configure_logging(json: bool) -> None:
@@ -21,6 +35,7 @@ def configure_logging(json: bool) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        redact_secrets,
         structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer(),
     ]
     structlog.configure(

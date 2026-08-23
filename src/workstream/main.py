@@ -18,9 +18,14 @@ from workstream.core.errors import (
     validation_error_handler,
 )
 from workstream.db.session import async_engine
+from workstream.modules.audit.router import router as audit_router
 from workstream.modules.auth.router import router as auth_router
+from workstream.modules.comments.router import router as comments_router
+from workstream.modules.issues.router import router as issues_router
+from workstream.modules.labels.router import router as labels_router
+from workstream.modules.notifications.router import router as notifications_router
 from workstream.modules.organizations.router import router as organization_router
-from workstream.modules.work.router import router as work_router
+from workstream.modules.projects.router import router as projects_router
 from workstream.observability import configure_logging, metrics_response, request_middleware
 
 settings = get_settings()
@@ -52,7 +57,12 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)  # t
 app.add_exception_handler(Exception, unexpected_error_handler)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(organization_router, prefix="/api/v1")
-app.include_router(work_router, prefix="/api/v1")
+app.include_router(projects_router, prefix="/api/v1")
+app.include_router(issues_router, prefix="/api/v1")
+app.include_router(labels_router, prefix="/api/v1")
+app.include_router(comments_router, prefix="/api/v1")
+app.include_router(notifications_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")
 
 
 @app.get("/health/live", include_in_schema=False)
