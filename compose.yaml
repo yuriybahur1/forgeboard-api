@@ -1,3 +1,12 @@
+x-app: &app
+  build: .
+  env_file: [.env]
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    migrate: {condition: service_completed_successfully}
+  stop_grace_period: 30s
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -12,22 +21,18 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
     ports: ["8025:8025"]
-  api: &app
-    build: .
-    env_file: [.env]
+  api:
+    <<: *app
     ports: ["8000:8000"]
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      migrate: {condition: service_completed_successfully}
-    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 30s
+      timeout: 3s
   worker:
     <<: *app
-    ports: []
     command: [celery, -A, workstream.infrastructure.celery_app:celery_app, worker, --loglevel=INFO]
   beat:
     <<: *app
-    ports: []
     command: [celery, -A, workstream.infrastructure.celery_app:celery_app, beat, --loglevel=INFO, --schedule=/tmp/celerybeat-schedule]
   migrate:
     build: .

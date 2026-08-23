@@ -20,3 +20,22 @@ def test_celery_beat_schedule_uses_writable_runtime_location() -> None:
         "task": "workstream.outbox.dispatch",
         "schedule": 5.0,
     }
+
+
+def test_http_healthcheck_belongs_only_to_api_service() -> None:
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    services = compose["services"]
+
+    assert services["api"]["healthcheck"] == {
+        "test": [
+            "CMD",
+            "python",
+            "-c",
+            ("import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"),
+        ],
+        "interval": "30s",
+        "timeout": "3s",
+    }
+    assert "healthcheck" not in services["worker"]
+    assert "healthcheck" not in services["beat"]
+    assert "HEALTHCHECK" not in (ROOT / "Dockerfile").read_text()
