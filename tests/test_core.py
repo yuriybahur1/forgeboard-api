@@ -20,4 +20,9 @@ def test_cursor_round_trip_and_rejects_malformed() -> None:
 
 def test_production_settings_reject_default_secret() -> None:
     with pytest.raises(ValidationError):
-        Settings(environment="production", log_json=True)
+        Settings(
+            _env_file=None,
+            environment="production",
+            log_json=True,
+            jwt_secret="local-only-change-me-please-32-chars",
+        )

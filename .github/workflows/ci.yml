@@ -29,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-        with: {enable-cache: true}
+        with:
+          enable-cache: true
+          python-version: "3.13"
       - run: uv sync --frozen --all-groups
       - run: uv run ruff format --check .
       - run: uv run ruff check .
