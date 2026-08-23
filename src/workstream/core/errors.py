@@ -1,5 +1,6 @@
 from typing import Any
 
+import structlog
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -44,4 +45,25 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
             "errors": errors,
         },
         status_code=422,
+    )
+
+
+async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    structlog.get_logger().exception(
+        "unhandled_request_exception",
+        method=request.method,
+        path=request.url.path,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        {
+            "type": "https://workstream.local/problems/internal_error",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "An unexpected error occurred",
+            "instance": request.url.path,
+            "code": "internal_error",
+            "request_id": getattr(request.state, "request_id", None),
+        },
+        status_code=500,
     )

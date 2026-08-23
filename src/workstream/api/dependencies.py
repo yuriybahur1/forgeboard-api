@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -16,9 +17,15 @@ DB = Annotated[AsyncSession, Depends(get_session)]
 Config = Annotated[Settings, Depends(get_settings)]
 
 
-async def current_user(
+@dataclass(frozen=True, slots=True)
+class Principal:
+    user: User
+    session_id: UUID
+
+
+async def current_principal(
     db: DB, settings: Config, authorization: Annotated[str | None, Header()] = None
-) -> User:
+) -> Principal:
     if not authorization or not authorization.startswith("Bearer "):
         raise AppError(401, "authentication_required", "A valid bearer token is required")
     try:
@@ -33,17 +40,23 @@ async def current_user(
         .where(
             User.id == user_id,
             User.is_active,
-            AuthSession.id == session_id,
+            AuthSession.family_id == session_id,
             AuthSession.revoked_at.is_(None),
+            AuthSession.rotated_at.is_(None),
         )
     )
     user = result.scalar_one_or_none()
     if user is None:
         raise AppError(401, "session_revoked", "The session is no longer active")
-    return user
+    return Principal(user=user, session_id=session_id)
+
+
+async def current_user(principal: Annotated[Principal, Depends(current_principal)]) -> User:
+    return principal.user
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
 
 async def require_membership(

@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 from sqlalchemy import select
 
-from workstream.api.dependencies import DB, CurrentUser, require_membership
+from workstream.api.dependencies import DB, Config, CurrentUser, require_membership
+from workstream.api.rate_limit import enforce_rate_limit
 from workstream.api.schemas import (
     InvitationAccept,
     InvitationCreate,
@@ -146,8 +147,20 @@ async def remove_member(organization_id: UUID, member_id: UUID, user: CurrentUse
 
 @router.post("/{organization_id}/invitations", status_code=201)
 async def invite(
-    organization_id: UUID, body: InvitationCreate, user: CurrentUser, db: DB
+    organization_id: UUID,
+    body: InvitationCreate,
+    user: CurrentUser,
+    db: DB,
+    request: Request,
+    settings: Config,
 ) -> dict[str, object]:
+    await enforce_rate_limit(
+        request,
+        scope="invitation",
+        account=str(body.email),
+        limit=settings.invitation_rate_limit,
+        window=3600,
+    )
     await require_membership(db, organization_id, user.id, {"owner", "admin"})
     raw = opaque_token()
     invitation = Invitation(

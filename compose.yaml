@@ -19,6 +19,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     stop_grace_period: 30s
   worker:
     <<: *app
@@ -28,4 +29,11 @@ services:
     <<: *app
     ports: []
     command: [celery, -A, workstream.infrastructure.celery_app:celery_app, beat, --loglevel=INFO]
+  migrate:
+    build: .
+    env_file: [.env]
+    command: [alembic, upgrade, head]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
 volumes: {postgres-data: {}, redis-data: {}}

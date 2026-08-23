@@ -32,14 +32,14 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def access_token(user_id: UUID, session_id: UUID, settings: Settings) -> str:
+def access_token(user_id: UUID, logical_session_id: UUID, settings: Settings) -> str:
     now = datetime.now(UTC)
     return cast(
         str,
         jwt.encode(
             {
                 "sub": str(user_id),
-                "sid": str(session_id),
+                "sid": str(logical_session_id),
                 "iss": settings.jwt_issuer,
                 "aud": settings.jwt_audience,
                 "iat": now,

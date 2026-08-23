@@ -2,4 +2,4 @@
 
 Status: accepted.
 
-External side effects originate as outbox rows committed with business state. Concurrent dispatchers claim with `SKIP LOCKED`; retry and worker failure mean delivery is at least once. Consumers are designed to tolerate duplicate delivery. Failed events remain inspectable rather than being discarded.
+External side effects originate as outbox rows committed with business state. Concurrent dispatchers claim and lease rows with `SKIP LOCKED` in a short transaction, deliver outside the transaction, then finalize separately. Expired leases are reclaimable. A worker can deliver successfully and die before finalization, so delivery is at least once and SMTP duplicates remain possible. Failed events back off and remain inspectable after the bounded retry limit.

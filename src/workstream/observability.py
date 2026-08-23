@@ -39,15 +39,7 @@ async def request_middleware(
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=request_id)
     started = time.perf_counter()
-    try:
-        response = await call_next(request)
-    except Exception:
-        structlog.get_logger().exception(
-            "unhandled_request_exception", method=request.method, path=request.url.path
-        )
-        raise
-    finally:
-        structlog.contextvars.clear_contextvars()
+    response = await call_next(request)
     route = getattr(request.scope.get("route"), "path", "unmatched")
     duration = time.perf_counter() - started
     REQUESTS.labels(request.method, route, f"{response.status_code // 100}xx").inc()
@@ -62,6 +54,9 @@ async def request_middleware(
         status_code=response.status_code,
         duration_ms=round(duration * 1000, 2),
     )
+    structlog.contextvars.clear_contextvars()
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

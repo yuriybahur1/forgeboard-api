@@ -8,36 +8,6 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class Register(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=12, max_length=256)
-    display_name: str = Field(min_length=1, max_length=120)
-
-
-class Login(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class Refresh(BaseModel):
-    refresh_token: str
-
-
-class TokenPair(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"  # noqa: S105 -- OAuth token type, not a credential.
-    expires_in: int
-
-
-class UserOut(ORMModel):
-    id: UUID
-    email: EmailStr
-    display_name: str
-    email_verified_at: datetime | None
-    is_active: bool
-
-
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=63)

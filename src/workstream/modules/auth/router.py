@@ -5,8 +5,8 @@ from fastapi import APIRouter, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from workstream.api.dependencies import DB, Config, CurrentUser
-from workstream.api.schemas import Login, Refresh, Register, TokenPair, UserOut
+from workstream.api.dependencies import DB, Config, CurrentPrincipal, CurrentUser
+from workstream.api.rate_limit import enforce_rate_limit
 from workstream.core.errors import AppError
 from workstream.core.security import (
     access_token,
@@ -15,6 +15,18 @@ from workstream.core.security import (
     token_hash,
     verify_password,
 )
+from workstream.modules.auth.schemas import (
+    GenericAcceptedResponse,
+    LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshRequest,
+    RegisterRequest,
+    SessionResponse,
+    TokenPair,
+    UserResponse,
+    VerifyEmailRequest,
+)
 from workstream.modules.models import AuditEvent, AuthSession, OneTimeToken, OutboxEvent, User
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -22,14 +34,14 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 def pair(user: User, session: AuthSession, raw: str, settings: Config) -> TokenPair:
     return TokenPair(
-        access_token=access_token(user.id, session.id, settings),
+        access_token=access_token(user.id, session.family_id, settings),
         refresh_token=raw,
         expires_in=settings.access_token_minutes * 60,
     )
 
 
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def register(body: Register, db: DB, request: Request) -> User:
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(body: RegisterRequest, db: DB, request: Request) -> User:
     user = User(
         email=str(body.email).lower(),
         password_hash=hash_password(body.password),
@@ -72,7 +84,10 @@ async def register(body: Register, db: DB, request: Request) -> User:
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(body: Login, db: DB, settings: Config, request: Request) -> TokenPair:
+async def login(body: LoginRequest, db: DB, settings: Config, request: Request) -> TokenPair:
+    await enforce_rate_limit(
+        request, scope="login", account=str(body.email), limit=settings.login_rate_limit, window=60
+    )
     user = (
         await db.execute(select(User).where(User.email == str(body.email).lower()))
     ).scalar_one_or_none()
@@ -103,7 +118,7 @@ async def login(body: Login, db: DB, settings: Config, request: Request) -> Toke
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(body: Refresh, db: DB, settings: Config) -> TokenPair:
+async def refresh(body: RefreshRequest, db: DB, settings: Config) -> TokenPair:
     digest = token_hash(body.refresh_token)
     session = (
         await db.execute(
@@ -134,6 +149,8 @@ async def refresh(body: Refresh, db: DB, settings: Config) -> TokenPair:
         family_id=session.family_id,
         refresh_token_hash=token_hash(raw),
         expires_at=session.expires_at,
+        user_agent=session.user_agent,
+        ip_address=session.ip_address,
     )
     db.add(successor)
     await db.flush()
@@ -144,32 +161,37 @@ async def refresh(body: Refresh, db: DB, settings: Config) -> TokenPair:
 
 
 @router.post("/logout", status_code=204)
-async def logout(user: CurrentUser, db: DB) -> None:
+async def logout(principal: CurrentPrincipal, db: DB) -> None:
     await db.execute(
         update(AuthSession)
-        .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+        .where(
+            AuthSession.user_id == principal.user.id,
+            AuthSession.family_id == principal.session_id,
+            AuthSession.revoked_at.is_(None),
+        )
         .values(revoked_at=datetime.now(UTC))
     )
     await db.commit()
 
 
-@router.get("/sessions")
-async def sessions(user: CurrentUser, db: DB) -> list[dict[str, object]]:
+@router.get("/sessions", response_model=list[SessionResponse])
+async def sessions(user: CurrentUser, db: DB) -> list[SessionResponse]:
     rows = (
         await db.execute(
             select(AuthSession)
-            .where(AuthSession.user_id == user.id)
+            .where(AuthSession.user_id == user.id, AuthSession.rotated_at.is_(None))
             .order_by(AuthSession.created_at.desc())
         )
     ).scalars()
     return [
-        {
-            "id": s.id,
-            "created_at": s.created_at,
-            "expires_at": s.expires_at,
-            "revoked_at": s.revoked_at,
-            "user_agent": s.user_agent,
-        }
+        SessionResponse(
+            id=s.family_id,
+            created_at=s.created_at,
+            expires_at=s.expires_at,
+            revoked_at=s.revoked_at,
+            user_agent=s.user_agent,
+            ip_address=s.ip_address,
+        )
         for s in rows
     ]
 
@@ -178,7 +200,7 @@ async def sessions(user: CurrentUser, db: DB) -> list[dict[str, object]]:
 async def revoke_session(session_id: UUID, user: CurrentUser, db: DB) -> None:
     await db.execute(
         update(AuthSession)
-        .where(AuthSession.id == session_id, AuthSession.user_id == user.id)
+        .where(AuthSession.family_id == session_id, AuthSession.user_id == user.id)
         .values(revoked_at=datetime.now(UTC))
     )
     await db.commit()
@@ -186,16 +208,21 @@ async def revoke_session(session_id: UUID, user: CurrentUser, db: DB) -> None:
 
 @router.delete("/sessions", status_code=204)
 async def revoke_all(user: CurrentUser, db: DB) -> None:
-    await logout(user, db)
+    await db.execute(
+        update(AuthSession)
+        .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(UTC))
+    )
+    await db.commit()
 
 
 @router.post("/verify-email", status_code=204)
-async def verify_email(body: Refresh, db: DB) -> None:
+async def verify_email(body: VerifyEmailRequest, db: DB) -> None:
     row = (
         await db.execute(
             select(OneTimeToken)
             .where(
-                OneTimeToken.token_hash == token_hash(body.refresh_token),
+                OneTimeToken.token_hash == token_hash(body.token),
                 OneTimeToken.purpose == "verify_email",
             )
             .with_for_update()
@@ -211,8 +238,48 @@ async def verify_email(body: Refresh, db: DB) -> None:
     await db.commit()
 
 
-@router.post("/password-reset/request", status_code=202)
-async def request_reset(body: Login, db: DB) -> dict[str, str]:
+@router.post("/email-verification/resend", response_model=GenericAcceptedResponse, status_code=202)
+async def resend_verification(
+    user: CurrentUser, db: DB, request: Request, settings: Config
+) -> GenericAcceptedResponse:
+    await enforce_rate_limit(
+        request,
+        scope="verify-resend",
+        account=user.email,
+        limit=settings.verification_rate_limit,
+        window=3600,
+    )
+    if user.email_verified_at is None:
+        raw = opaque_token()
+        db.add(
+            OneTimeToken(
+                user_id=user.id,
+                purpose="verify_email",
+                token_hash=token_hash(raw),
+                expires_at=datetime.now(UTC) + timedelta(hours=24),
+            )
+        )
+        db.add(
+            OutboxEvent(
+                topic="email.verification",
+                payload={"user_id": str(user.id), "email": user.email, "token": raw},
+            )
+        )
+        await db.commit()
+    return GenericAcceptedResponse(detail="Verification instructions will be sent if needed")
+
+
+@router.post("/password-reset/request", response_model=GenericAcceptedResponse, status_code=202)
+async def request_reset(
+    body: PasswordResetRequest, db: DB, request: Request, settings: Config
+) -> GenericAcceptedResponse:
+    await enforce_rate_limit(
+        request,
+        scope="password-reset",
+        account=str(body.email),
+        limit=settings.password_reset_rate_limit,
+        window=3600,
+    )
     user = (
         await db.execute(select(User).where(User.email == str(body.email).lower()))
     ).scalar_one_or_none()
@@ -233,16 +300,16 @@ async def request_reset(body: Login, db: DB) -> dict[str, str]:
             )
         )
         await db.commit()
-    return {"detail": "If the account exists, reset instructions will be sent"}
+    return GenericAcceptedResponse(detail="If the account exists, reset instructions will be sent")
 
 
 @router.post("/password-reset", status_code=204)
-async def reset_password(body: Register, db: DB) -> None:
+async def reset_password(body: PasswordResetConfirm, db: DB) -> None:
     row = (
         await db.execute(
             select(OneTimeToken)
             .where(
-                OneTimeToken.token_hash == token_hash(str(body.email)),
+                OneTimeToken.token_hash == token_hash(body.token),
                 OneTimeToken.purpose == "password_reset",
             )
             .with_for_update()
@@ -253,7 +320,7 @@ async def reset_password(body: Register, db: DB) -> None:
         raise AppError(400, "invalid_token", "Token is invalid or expired")
     user = await db.get(User, row.user_id)
     assert user
-    user.password_hash = hash_password(body.password)
+    user.password_hash = hash_password(body.new_password)
     row.used_at = now
     await db.execute(
         update(AuthSession).where(AuthSession.user_id == user.id).values(revoked_at=now)

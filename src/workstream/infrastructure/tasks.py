@@ -1,16 +1,14 @@
 import socket
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from celery import Task
-from sqlalchemy import select
 
 from workstream.core.config import get_settings
 from workstream.db.session import sync_session_factory
 from workstream.infrastructure.celery_app import celery_app
 from workstream.infrastructure.email import send_email
-from workstream.modules.models import OutboxEvent
+from workstream.infrastructure.outbox import ClaimedEvent, claim_events, mark_failed, mark_processed
 
 logger = structlog.get_logger()
 
@@ -23,52 +21,22 @@ logger = structlog.get_logger()
     retry_jitter=True,
 )
 def dispatch_outbox(self: Task[Any, Any], batch_size: int = 50) -> int:
+    settings = get_settings()
     worker = f"{socket.gethostname()}:{self.request.id}"
     processed = 0
-    with sync_session_factory.begin() as db:
-        events = list(
-            db.scalars(
-                select(OutboxEvent)
-                .where(
-                    OutboxEvent.processed_at.is_(None),
-                    OutboxEvent.failed_at.is_(None),
-                    OutboxEvent.available_at <= datetime.now(UTC),
-                )
-                .order_by(OutboxEvent.occurred_at)
-                .limit(batch_size)
-                .with_for_update(skip_locked=True)
-            )
-        )
-        for event in events:
-            event.locked_at = datetime.now(UTC)
-            event.locked_by = worker
-        db.flush()
-        for event in events:
-            try:
-                deliver(event)
-                event.processed_at = datetime.now(UTC)
-                processed += 1
-            except Exception as exc:
-                event.attempts += 1
-                event.last_error = str(exc)[:2000]
-                event.locked_at = None
-                event.locked_by = None
-                if event.attempts >= 10:
-                    event.failed_at = datetime.now(UTC)
-                else:
-                    event.available_at = datetime.now(UTC) + timedelta(
-                        seconds=min(3600, 2**event.attempts)
-                    )
-                logger.warning(
-                    "outbox_delivery_failed",
-                    event_id=str(event.id),
-                    topic=event.topic,
-                    attempts=event.attempts,
-                )
+    events = claim_events(sync_session_factory, worker, batch_size, settings.outbox_claim_seconds)
+    for event in events:
+        try:
+            deliver(event)
+            mark_processed(sync_session_factory, event, worker)
+            processed += 1
+        except Exception as exc:
+            mark_failed(sync_session_factory, event, worker, exc, settings.outbox_max_attempts)
+            logger.warning("outbox_delivery_failed", event_id=str(event.id), topic=event.topic)
     return processed
 
 
-def deliver(event: OutboxEvent) -> None:
+def deliver(event: ClaimedEvent) -> None:
     settings = get_settings()
     payload = event.payload
     token = str(payload["token"])

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     email_from: str = "noreply@workstream.local"
     public_url: str = "http://localhost:8000"
     log_json: bool = False
+    login_rate_limit: int = 10
+    password_reset_rate_limit: int = 5
+    verification_rate_limit: int = 3
+    invitation_rate_limit: int = 20
+    outbox_claim_seconds: int = 120
+    outbox_max_attempts: int = 10
 
     @model_validator(mode="after")
     def validate_production(self) -> Self:
