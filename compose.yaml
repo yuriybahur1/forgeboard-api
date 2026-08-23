@@ -28,7 +28,7 @@ services:
   beat:
     <<: *app
     ports: []
-    command: [celery, -A, workstream.infrastructure.celery_app:celery_app, beat, --loglevel=INFO]
+    command: [celery, -A, workstream.infrastructure.celery_app:celery_app, beat, --loglevel=INFO, --schedule=/tmp/celerybeat-schedule]
   migrate:
     build: .
     env_file: [.env]
