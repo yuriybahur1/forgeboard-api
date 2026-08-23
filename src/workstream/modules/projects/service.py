@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workstream.api.dependencies import require_membership
@@ -28,17 +29,27 @@ async def create_project(
     await require_membership(db, organization_id, user.id, {"owner", "admin", "member"})
     project = Project(organization_id=organization_id, **body.model_dump())
     db.add(project)
-    await db.flush()
-    db.add(
-        AuditEvent(
-            actor_id=user.id,
-            organization_id=organization_id,
-            action="project.created",
-            entity_type="project",
-            entity_id=project.id,
+    try:
+        await db.flush()
+        db.add(
+            AuditEvent(
+                actor_id=user.id,
+                organization_id=organization_id,
+                action="project.created",
+                entity_type="project",
+                entity_id=project.id,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == (
+            "uq_projects_organization_id_key"
+        ):
+            raise AppError(
+                409, "project_key_conflict", "Project key is already in use in this organization"
+            ) from exc
+        raise
     return project
 
 

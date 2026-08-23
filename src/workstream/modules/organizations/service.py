@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workstream.api.dependencies import require_membership
@@ -29,19 +30,29 @@ async def create(
 ) -> Organization:
     org = Organization(name=body.name, slug=body.slug)
     db.add(org)
-    await db.flush()
-    db.add(Membership(organization_id=org.id, user_id=user.id, role="owner"))
-    db.add(
-        AuditEvent(
-            actor_id=user.id,
-            organization_id=org.id,
-            action="organization.created",
-            entity_type="organization",
-            entity_id=org.id,
-            request_id=request_id,
+    try:
+        await db.flush()
+        db.add(Membership(organization_id=org.id, user_id=user.id, role="owner"))
+        db.add(
+            AuditEvent(
+                actor_id=user.id,
+                organization_id=org.id,
+                action="organization.created",
+                entity_type="organization",
+                entity_id=org.id,
+                request_id=request_id,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == (
+            "uq_organizations_slug"
+        ):
+            raise AppError(
+                409, "organization_slug_conflict", "Organization slug is already in use"
+            ) from exc
+        raise
     return org
 
 
@@ -114,8 +125,10 @@ async def change_role(
 async def remove_member(
     db: AsyncSession, organization_id: UUID, member_id: UUID, actor: User
 ) -> None:
-    await require_membership(db, organization_id, actor.id, {"owner", "admin"})
+    actor_membership = await require_membership(db, organization_id, actor.id, {"owner", "admin"})
     member = await lock_member(db, organization_id, member_id)
+    if actor_membership.role == "admin" and member.role == "owner":
+        raise AppError(403, "insufficient_permission", "Admins cannot remove organization owners")
     await protect_owner(db, organization_id, member)
     await db.delete(member)
     db.add(

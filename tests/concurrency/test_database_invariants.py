@@ -9,7 +9,17 @@ from workstream.api.schemas import InvitationAccept, IssueCreate, IssueUpdate, R
 from workstream.core.errors import AppError
 from workstream.core.security import hash_password, opaque_token, token_hash
 from workstream.modules.issues.service import create_issue, update_issue
-from workstream.modules.models import Invitation, Issue, Membership, Organization, Project, User
+from workstream.modules.labels.service import attach
+from workstream.modules.models import (
+    Invitation,
+    Issue,
+    IssueLabel,
+    Label,
+    Membership,
+    Organization,
+    Project,
+    User,
+)
 from workstream.modules.organizations.router import accept_invitation, change_role, remove_member
 
 pytestmark = [pytest.mark.integration, pytest.mark.concurrency]
@@ -22,6 +32,21 @@ async def test_concurrent_registration_uniqueness(client: AsyncClient) -> None:
         client.post("/api/v1/auth/register", json=payload),
     )
     assert sorted(response.status_code for response in responses) == [201, 409]
+
+
+async def test_concurrent_organization_slug_conflict_is_stable(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    payloads = [
+        {"name": "Race One", "slug": "organization-race"},
+        {"name": "Race Two", "slug": "organization-race"},
+    ]
+    responses = await asyncio.gather(
+        *(client.post("/api/v1/organizations", headers=auth_headers, json=row) for row in payloads)
+    )
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json()["code"] == "organization_slug_conflict"
 
 
 async def test_atomic_issue_numbering(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -51,6 +76,47 @@ async def test_atomic_issue_numbering(session_factory: async_sessionmaker[AsyncS
 
     numbers = await asyncio.gather(*(create_one(i) for i in range(12)))
     assert sorted(numbers) == list(range(1, 13)) and len(set(numbers)) == 12
+
+
+async def test_concurrent_label_attachment_is_idempotent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        user = User(email="labels@example.com", display_name="Labels", password_hash="x")
+        org = Organization(name="Labels", slug="labels")
+        db.add_all([user, org])
+        await db.flush()
+        db.add(Membership(organization_id=org.id, user_id=user.id, role="owner"))
+        project = Project(organization_id=org.id, name="Labels", key="LBL")
+        db.add(project)
+        await db.flush()
+        issue = Issue(
+            organization_id=org.id,
+            project_id=project.id,
+            number=1,
+            title="Attach label",
+            reporter_id=user.id,
+        )
+        label = Label(organization_id=org.id, name="race", color="#112233")
+        db.add_all([issue, label])
+        await db.commit()
+        ids = user.id, org.id, issue.id, label.id
+
+    async def attach_once() -> None:
+        async with session_factory() as db:
+            actor = await db.get(User, ids[0])
+            assert actor is not None
+            await attach(db, ids[1], ids[2], ids[3], actor)
+
+    await asyncio.gather(attach_once(), attach_once())
+
+    async with session_factory() as db:
+        count = await db.scalar(
+            select(func.count())
+            .select_from(IssueLabel)
+            .where(IssueLabel.issue_id == ids[2], IssueLabel.label_id == ids[3])
+        )
+        assert count == 1
 
 
 async def test_concurrent_invitation_acceptance_is_idempotent(

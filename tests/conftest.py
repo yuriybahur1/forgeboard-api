@@ -1,8 +1,45 @@
+# ruff: noqa: E402 -- test environment must be isolated before application imports
+
 import os
 import shutil
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+test_sync_url = os.getenv("WORKSTREAM_TEST_DATABASE_URL")
+test_async_url = os.getenv("WORKSTREAM_TEST_ASYNC_DATABASE_URL")
+test_redis_url = os.getenv("WORKSTREAM_TEST_REDIS_URL")
+explicit_service_urls = bool(test_sync_url and test_async_url and test_redis_url)
+os.environ.update(
+    {
+        "WORKSTREAM_ENVIRONMENT": "test",
+        "WORKSTREAM_APP_NAME": "Workstream",
+        "WORKSTREAM_DATABASE_URL": (test_sync_url if explicit_service_urls else None)
+        or "postgresql+psycopg://workstream:workstream@localhost:5432/workstream_test",
+        "WORKSTREAM_ASYNC_DATABASE_URL": (test_async_url if explicit_service_urls else None)
+        or "postgresql+psycopg_async://workstream:workstream@localhost:5432/workstream_test",
+        "WORKSTREAM_REDIS_URL": (test_redis_url if explicit_service_urls else None)
+        or "redis://localhost:6379/15",
+        "WORKSTREAM_JWT_SECRET": "test-only-secret-with-at-least-32-characters",
+        "WORKSTREAM_JWT_ISSUER": "workstream",
+        "WORKSTREAM_JWT_AUDIENCE": "workstream-api",
+        "WORKSTREAM_ACCESS_TOKEN_MINUTES": "15",
+        "WORKSTREAM_REFRESH_TOKEN_DAYS": "30",
+        "WORKSTREAM_ALLOWED_HOSTS": '["localhost","127.0.0.1","testserver"]',
+        "WORKSTREAM_CORS_ORIGINS": "[]",
+        "WORKSTREAM_SMTP_HOST": "localhost",
+        "WORKSTREAM_SMTP_PORT": "1025",
+        "WORKSTREAM_EMAIL_FROM": "noreply@workstream.test",
+        "WORKSTREAM_PUBLIC_URL": "http://testserver",
+        "WORKSTREAM_LOG_JSON": "false",
+        "WORKSTREAM_LOGIN_RATE_LIMIT": "10",
+        "WORKSTREAM_PASSWORD_RESET_RATE_LIMIT": "5",
+        "WORKSTREAM_VERIFICATION_RATE_LIMIT": "3",
+        "WORKSTREAM_INVITATION_RATE_LIMIT": "20",
+        "WORKSTREAM_OUTBOX_CLAIM_SECONDS": "120",
+        "WORKSTREAM_OUTBOX_MAX_ATTEMPTS": "10",
+    }
+)
 
 import pytest
 import pytest_asyncio
@@ -22,7 +59,6 @@ from testcontainers.redis import RedisContainer
 
 from workstream.core.config import get_settings
 from workstream.core.security import hash_password
-from workstream.db.session import get_session
 from workstream.modules.models import Issue, Membership, Organization, Project, User
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,12 +88,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 @pytest.fixture(scope="session")
 def service_urls() -> Iterator[ServiceURLs]:
-    sync_url = os.getenv("WORKSTREAM_TEST_DATABASE_URL")
-    async_url = os.getenv("WORKSTREAM_TEST_ASYNC_DATABASE_URL")
-    redis_url = os.getenv("WORKSTREAM_TEST_REDIS_URL")
-    if sync_url and async_url and redis_url:
+    sync_url = test_sync_url
+    async_url = test_async_url
+    redis_url = test_redis_url
+    if explicit_service_urls:
+        assert sync_url and async_url and redis_url
         yield ServiceURLs(sync_url, async_url, redis_url)
         return
+    if any((sync_url, async_url, redis_url)):
+        pytest.fail("Set all three WORKSTREAM_TEST_* service URLs or leave all three unset")
     if shutil.which("docker") is None:
         pytest.fail("Integration tests require WORKSTREAM_TEST_* URLs or Docker/Testcontainers")
     with (
@@ -66,7 +105,10 @@ def service_urls() -> Iterator[ServiceURLs]:
     ):
         sync_url = postgres.get_connection_url().replace("psycopg2", "psycopg")
         async_url = sync_url.replace("postgresql+psycopg://", "postgresql+psycopg_async://")
-        yield ServiceURLs(sync_url, async_url, redis.get_connection_url())
+        redis_host = redis.get_container_host_ip()
+        redis_port = redis.get_exposed_port(6379)
+        redis_authority = f"[{redis_host}]" if ":" in redis_host else redis_host
+        yield ServiceURLs(sync_url, async_url, f"redis://{redis_authority}:{redis_port}/0")
 
 
 @pytest.fixture(scope="session")
@@ -128,6 +170,7 @@ async def redis_client(migrated_database: ServiceURLs) -> AsyncIterator[Redis]:
 async def client(
     session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ) -> AsyncIterator[AsyncClient]:
+    from workstream.db.session import get_session
     from workstream.main import app
 
     async def override_session() -> AsyncIterator[AsyncSession]:

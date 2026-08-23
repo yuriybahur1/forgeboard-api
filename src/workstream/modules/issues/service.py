@@ -135,6 +135,7 @@ async def change_status(
             "invalid_status_transition",
             f"Cannot transition from {issue.status} to {body.status}",
         )
+    previous_status = issue.status
     result = await optimistic_update(db, issue, body.expected_version, {"status": body.status})
     db.add(
         AuditEvent(
@@ -143,7 +144,7 @@ async def change_status(
             action="issue.status_changed",
             entity_type="issue",
             entity_id=issue.id,
-            metadata_={"from": issue.status, "to": body.status},
+            metadata_={"from": previous_status, "to": body.status},
         )
     )
     await db.commit()

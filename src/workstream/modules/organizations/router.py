@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Request
@@ -120,6 +121,7 @@ async def invitations(organization_id: UUID, user: CurrentUser, db: DB) -> list[
                 Invitation.organization_id == organization_id,
                 Invitation.accepted_at.is_(None),
                 Invitation.revoked_at.is_(None),
+                Invitation.expires_at > datetime.now(UTC),
             )
             .limit(100)
         )

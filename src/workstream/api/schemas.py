@@ -44,7 +44,7 @@ class InvitationCreate(BaseModel):
 
 
 class InvitationAccept(BaseModel):
-    token: str
+    token: str = Field(min_length=32, max_length=512)
 
 
 class ProjectCreate(BaseModel):
@@ -92,7 +92,7 @@ class StatusChange(BaseModel):
 
 
 class Assignment(BaseModel):
-    expected_version: int
+    expected_version: int = Field(ge=1)
     assignee_id: UUID | None
 
 

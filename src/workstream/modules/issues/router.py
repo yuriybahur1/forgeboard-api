@@ -15,7 +15,7 @@ from workstream.api.schemas import (
     StatusChange,
 )
 from workstream.modules.issues import service
-from workstream.modules.models import Issue, IssueLabel
+from workstream.modules.models import Issue, IssueLabel, IssueStatus, Priority
 
 router = APIRouter(prefix="/organizations/{organization_id}/issues", tags=["issues"])
 
@@ -31,8 +31,8 @@ async def list_(
     user: CurrentUser,
     db: DB,
     project_id: UUID | None = None,
-    status: str | None = None,
-    priority: str | None = None,
+    status: IssueStatus | None = None,
+    priority: Priority | None = None,
     assignee_id: UUID | None = None,
     reporter_id: UUID | None = None,
     label_id: UUID | None = None,
