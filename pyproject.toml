@@ -48,3 +48,5 @@ markers = [
   "integration: PostgreSQL or Redis integration tests",
   "concurrency: multi-connection PostgreSQL concurrency tests",
 ]
+[tool.coverage.run]
+omit = ["src/workstream/seed.py"]
