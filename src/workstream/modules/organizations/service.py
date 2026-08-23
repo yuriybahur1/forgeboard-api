@@ -208,6 +208,8 @@ async def accept(db: AsyncSession, actor: User, body: InvitationAccept) -> None:
         raise AppError(400, "invalid_invitation", "Invitation is invalid or expired")
     if invitation.invited_email != actor.email:
         raise AppError(403, "invitation_email_mismatch", "Invitation belongs to another account")
+    if invitation.accepted_at is not None:
+        return
     if await db.get(Membership, (invitation.organization_id, actor.id)) is None:
         db.add(
             Membership(

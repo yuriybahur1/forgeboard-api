@@ -142,6 +142,15 @@ async def refresh(body: RefreshRequest, db: DB, settings: Config) -> TokenPair:
         )
     if session.revoked_at or session.expires_at <= now:
         raise AppError(401, "invalid_refresh_token", "Refresh token is expired or revoked")
+    user = await db.get(User, session.user_id)
+    if user is None or not user.is_active:
+        await db.execute(
+            update(AuthSession)
+            .where(AuthSession.family_id == session.family_id)
+            .values(revoked_at=now)
+        )
+        await db.commit()
+        raise AppError(401, "invalid_refresh_token", "Refresh token is expired or revoked")
     session.rotated_at = now
     raw = opaque_token()
     successor = AuthSession(
@@ -154,9 +163,7 @@ async def refresh(body: RefreshRequest, db: DB, settings: Config) -> TokenPair:
     )
     db.add(successor)
     await db.flush()
-    user = await db.get(User, session.user_id)
     await db.commit()
-    assert user is not None
     return pair(user, successor, raw, settings)
 
 

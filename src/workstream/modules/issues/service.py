@@ -30,7 +30,18 @@ async def get_issue(db: AsyncSession, organization_id: UUID, issue_id: UUID) -> 
 async def validate_assignee(
     db: AsyncSession, organization_id: UUID, assignee_id: UUID | None
 ) -> None:
-    if assignee_id is not None and await db.get(Membership, (organization_id, assignee_id)) is None:
+    if assignee_id is None:
+        return
+    active_member = await db.scalar(
+        select(Membership.user_id)
+        .join(User, User.id == Membership.user_id)
+        .where(
+            Membership.organization_id == organization_id,
+            Membership.user_id == assignee_id,
+            User.is_active.is_(True),
+        )
+    )
+    if active_member is None:
         raise AppError(422, "invalid_assignee", "Assignee must be an organization member")
 
 

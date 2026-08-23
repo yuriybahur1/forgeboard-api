@@ -57,6 +57,15 @@ class Issue(UUIDPrimaryKey, Timestamped, Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("project_id", "number"),
+        CheckConstraint(
+            "status IN ('backlog','todo','in_progress','done','canceled')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "priority IN ('no_priority','low','medium','high','urgent')",
+            name="valid_priority",
+        ),
+        CheckConstraint("version >= 1", name="positive_version"),
         Index("ix_issues_org_created_id", "organization_id", text("created_at DESC"), "id"),
         Index("ix_issues_project_status", "project_id", "status"),
         Index("ix_issues_assignee", "organization_id", "assignee_id"),

@@ -54,25 +54,27 @@ async def request_middleware(
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=request_id)
     started = time.perf_counter()
-    response = await call_next(request)
-    route = getattr(request.scope.get("route"), "path", "unmatched")
-    duration = time.perf_counter() - started
-    REQUESTS.labels(request.method, route, f"{response.status_code // 100}xx").inc()
-    LATENCY.labels(request.method, route).observe(duration)
-    response.headers["X-Request-ID"] = request_id
-    structlog.get_logger().info(
-        "request_complete",
-        request_id=request_id,
-        method=request.method,
-        path=request.url.path,
-        route=route,
-        status_code=response.status_code,
-        duration_ms=round(duration * 1000, 2),
-    )
-    structlog.contextvars.clear_contextvars()
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    try:
+        response = await call_next(request)
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        duration = time.perf_counter() - started
+        REQUESTS.labels(request.method, route, f"{response.status_code // 100}xx").inc()
+        LATENCY.labels(request.method, route).observe(duration)
+        response.headers["X-Request-ID"] = request_id
+        structlog.get_logger().info(
+            "request_complete",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            route=route,
+            status_code=response.status_code,
+            duration_ms=round(duration * 1000, 2),
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    finally:
+        structlog.contextvars.clear_contextvars()
 
 
 def metrics_response() -> Response:

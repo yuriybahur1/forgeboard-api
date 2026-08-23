@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from workstream.api.schemas import InvitationAccept
 from workstream.core.security import hash_password, opaque_token, token_hash
 from workstream.modules.models import (
     AuthSession,
@@ -19,6 +20,7 @@ from workstream.modules.models import (
     Project,
     User,
 )
+from workstream.modules.organizations import service as organization_service
 
 pytestmark = pytest.mark.integration
 PASSWORD = "ValidPassword123!"
@@ -84,6 +86,25 @@ async def test_expired_and_revoked_refresh_credentials(
         await db.commit()
         response = await client.post("/api/v1/auth/refresh", json={"refresh_token": raw})
         assert response.status_code == 401
+
+
+async def test_deactivated_user_cannot_rotate_refresh_session(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> None:
+    response = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": PASSWORD}
+    )
+    assert response.status_code == 200
+    refresh_token = response.json()["refresh_token"]
+    user.is_active = False
+    await db.commit()
+
+    denied = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert denied.status_code == 401
+    session = await db.scalar(
+        select(AuthSession).where(AuthSession.refresh_token_hash == token_hash(refresh_token))
+    )
+    assert session is not None and session.revoked_at is not None
 
 
 async def test_organization_update_invitation_revoke_and_acceptance_errors(
@@ -170,6 +191,39 @@ async def test_invitation_email_mismatch_and_expiry(
     assert expired.status_code == 400
 
 
+async def test_accepted_invitation_cannot_resurrect_removed_membership(
+    db: AsyncSession, organization: Organization, user: User
+) -> None:
+    invitee = User(
+        email="one-time-invite@example.com",
+        display_name="One Time Invitee",
+        password_hash=hash_password(PASSWORD),
+    )
+    raw = opaque_token()
+    db.add(invitee)
+    await db.flush()
+    db.add(
+        Invitation(
+            organization_id=organization.id,
+            invited_email=invitee.email,
+            role="member",
+            token_hash=token_hash(raw),
+            inviter_id=user.id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    await db.commit()
+
+    await organization_service.accept(db, invitee, InvitationAccept(token=raw))
+    membership = await db.get(Membership, (organization.id, invitee.id))
+    assert membership is not None
+    await db.delete(membership)
+    await db.commit()
+
+    await organization_service.accept(db, invitee, InvitationAccept(token=raw))
+    assert await db.get(Membership, (organization.id, invitee.id)) is None
+
+
 async def test_issue_archived_project_invalid_assignee_transition_and_assignment(
     client: AsyncClient,
     db: AsyncSession,
@@ -187,6 +241,18 @@ async def test_issue_archived_project_invalid_assignee_transition_and_assignment
         json={"project_id": str(project.id), "title": "Blocked"},
     )
     assert archived.status_code == 409 and archived.json()["code"] == "project_archived"
+    invalid_priority = await client.post(
+        f"/api/v1/organizations/{organization.id}/issues",
+        headers=auth_headers,
+        json={"project_id": str(project.id), "title": "Invalid", "priority": "critical"},
+    )
+    assert invalid_priority.status_code == 422
+    invalid_status = await client.post(
+        f"/api/v1/organizations/{organization.id}/issues/{issue.id}/status",
+        headers=auth_headers,
+        json={"expected_version": 1, "status": "unknown"},
+    )
+    assert invalid_status.status_code == 422
     project.archived = False
     outsider = User(
         email="outsider-assignee@example.com",
@@ -222,6 +288,14 @@ async def test_issue_archived_project_invalid_assignee_transition_and_assignment
     assert assigned.status_code == 200
     notification = await db.scalar(select(Notification).where(Notification.user_id == member.id))
     assert notification and notification.payload["issue_id"] == str(issue.id)
+    member.is_active = False
+    await db.commit()
+    inactive = await client.post(
+        f"/api/v1/organizations/{organization.id}/issues/{issue.id}/assignment",
+        headers=auth_headers,
+        json={"expected_version": 2, "assignee_id": str(member.id)},
+    )
+    assert inactive.status_code == 422 and inactive.json()["code"] == "invalid_assignee"
 
 
 async def test_label_and_comment_permission_and_missing_resource_branches(

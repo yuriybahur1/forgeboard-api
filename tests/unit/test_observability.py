@@ -1,12 +1,15 @@
 from uuid import uuid4
 
 import pytest
+import structlog
 from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
 from prometheus_client import generate_latest
+from starlette.requests import Request
 
 from workstream.core.errors import AppError
 from workstream.main import app
+from workstream.observability import request_middleware
 
 pytestmark = pytest.mark.unit
 
@@ -65,3 +68,26 @@ async def test_expected_error_is_clean_and_unexpected_is_sanitized(capsys) -> No
     )
     logs = capsys.readouterr().out
     assert logs.count("unhandled_request_exception") == 1
+
+
+async def test_request_context_is_cleared_when_downstream_raises() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/failure",
+            "raw_path": b"/failure",
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 1234),
+        }
+    )
+
+    async def fail(_: Request):
+        raise RuntimeError("downstream failure")
+
+    with pytest.raises(RuntimeError, match="downstream failure"):
+        await request_middleware(request, fail)
+    assert structlog.contextvars.get_contextvars() == {}

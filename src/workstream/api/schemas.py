@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from workstream.modules.issues.models import IssueStatus, Priority
+
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -71,7 +73,7 @@ class IssueCreate(BaseModel):
     project_id: UUID
     title: str = Field(min_length=1, max_length=240)
     description: str = Field(default="", max_length=100000)
-    priority: str = "no_priority"
+    priority: Priority = Priority.NO_PRIORITY
     assignee_id: UUID | None = None
     due_date: date | None = None
 
@@ -80,13 +82,13 @@ class IssueUpdate(BaseModel):
     expected_version: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=240)
     description: str | None = Field(default=None, max_length=100000)
-    priority: str | None = None
+    priority: Priority | None = None
     due_date: date | None = None
 
 
 class StatusChange(BaseModel):
-    expected_version: int
-    status: str
+    expected_version: int = Field(ge=1)
+    status: IssueStatus
 
 
 class Assignment(BaseModel):
