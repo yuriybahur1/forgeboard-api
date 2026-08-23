@@ -19,7 +19,15 @@ def uid(name: str) -> UUID:
 
 def main() -> None:
     with sync_session_factory.begin() as db:
-        if db.scalar(select(User.id).where(User.email == DEMO_USER_EMAILS[0])):
+        seed_user_ids = tuple(uid(role) for role in ("owner", "member", "viewer"))
+        existing_seed_users = {
+            user.id: user
+            for user in db.scalars(select(User).where(User.id.in_(seed_user_ids))).all()
+        }
+        if seed_user_ids[0] in existing_seed_users:
+            for user_id, email in zip(seed_user_ids, DEMO_USER_EMAILS, strict=True):
+                if user := existing_seed_users.get(user_id):
+                    user.email = email
             return
         users = [
             User(
