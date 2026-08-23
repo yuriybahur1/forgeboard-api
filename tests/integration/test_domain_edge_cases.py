@@ -337,6 +337,21 @@ async def test_label_and_comment_permission_and_missing_resource_branches(
         json={"body": "Not mine"},
     )
     assert forbidden.status_code == 403
+    member = User(
+        email="moderation-member@example.com",
+        display_name="Moderation Member",
+        password_hash=hash_password(PASSWORD),
+    )
+    db.add(member)
+    await db.flush()
+    db.add(Membership(organization_id=organization.id, user_id=member.id, role="member"))
+    await db.commit()
+    member_headers = await login(client, member)
+    forbidden_delete = await client.delete(
+        f"/api/v1/organizations/{organization.id}/comments/{comment.json()['id']}",
+        headers=member_headers,
+    )
+    assert forbidden_delete.status_code == 403
     moderated = await client.delete(
         f"/api/v1/organizations/{organization.id}/comments/{comment.json()['id']}",
         headers=auth_headers,

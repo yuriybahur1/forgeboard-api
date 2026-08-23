@@ -172,3 +172,27 @@ async def test_verification_resend_creates_outbox(
         )
         == 1
     )
+
+
+async def test_verified_account_resend_is_idempotent_and_authentication_rejects_bad_bearers(
+    client: AsyncClient, user: User, db: AsyncSession, auth_headers: dict[str, str]
+) -> None:
+    user.email_verified_at = datetime.now(UTC)
+    await db.commit()
+
+    response = await client.post("/api/v1/auth/email-verification/resend", headers=auth_headers)
+    assert response.status_code == 202
+    assert (
+        await db.scalar(
+            select(func.count())
+            .select_from(OutboxEvent)
+            .where(OutboxEvent.topic == "email.verification")
+        )
+        == 0
+    )
+    assert (await client.get("/api/v1/organizations")).status_code == 401
+    malformed = await client.get(
+        "/api/v1/organizations", headers={"Authorization": "Bearer not-a-jwt"}
+    )
+    assert malformed.status_code == 401
+    assert malformed.json()["code"] == "invalid_access_token"

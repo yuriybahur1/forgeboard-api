@@ -15,6 +15,20 @@ async def test_project_issue_label_comment_notification_workflows(
     )
     assert org_response.status_code == 201
     org_id = org_response.json()["id"]
+    organizations = await client.get("/api/v1/organizations", headers=auth_headers)
+    assert {item["id"] for item in organizations.json()} == {org_id}
+    organization = await client.get(f"/api/v1/organizations/{org_id}", headers=auth_headers)
+    assert organization.status_code == 200 and organization.json()["slug"] == "workflow"
+    members = await client.get(f"/api/v1/organizations/{org_id}/members", headers=auth_headers)
+    assert members.status_code == 200
+    assert members.json() == [
+        {
+            "user_id": str(user.id),
+            "role": "owner",
+            "email": user.email,
+            "display_name": user.display_name,
+        }
+    ]
     project = await client.post(
         f"/api/v1/organizations/{org_id}/projects",
         headers=auth_headers,
@@ -22,6 +36,12 @@ async def test_project_issue_label_comment_notification_workflows(
     )
     assert project.status_code == 201
     project_id = project.json()["id"]
+    projects = await client.get(f"/api/v1/organizations/{org_id}/projects", headers=auth_headers)
+    assert [item["id"] for item in projects.json()] == [project_id]
+    project_detail = await client.get(
+        f"/api/v1/organizations/{org_id}/projects/{project_id}", headers=auth_headers
+    )
+    assert project_detail.status_code == 200 and project_detail.json()["key"] == "ENG"
     assert (
         await client.patch(
             f"/api/v1/organizations/{org_id}/projects/{project_id}",
@@ -34,6 +54,14 @@ async def test_project_issue_label_comment_notification_workflows(
             f"/api/v1/organizations/{org_id}/projects/{project_id}/archive", headers=auth_headers
         )
     ).status_code == 204
+    active_projects = await client.get(
+        f"/api/v1/organizations/{org_id}/projects", headers=auth_headers
+    )
+    archived_projects = await client.get(
+        f"/api/v1/organizations/{org_id}/projects?include_archived=true", headers=auth_headers
+    )
+    assert active_projects.json() == []
+    assert [item["id"] for item in archived_projects.json()] == [project_id]
     assert (
         await client.post(
             f"/api/v1/organizations/{org_id}/projects/{project_id}/unarchive", headers=auth_headers
@@ -46,6 +74,15 @@ async def test_project_issue_label_comment_notification_workflows(
     )
     assert issue.status_code == 201
     issue_id = issue.json()["id"]
+    issue_detail = await client.get(
+        f"/api/v1/organizations/{org_id}/issues/{issue_id}", headers=auth_headers
+    )
+    issue_search = await client.get(
+        f"/api/v1/organizations/{org_id}/issues?search=Workflow&priority=no_priority",
+        headers=auth_headers,
+    )
+    assert issue_detail.status_code == 200 and issue_detail.json()["id"] == issue_id
+    assert [item["id"] for item in issue_search.json()["items"]] == [issue_id]
     updated = await client.patch(
         f"/api/v1/organizations/{org_id}/issues/{issue_id}",
         headers=auth_headers,
@@ -71,6 +108,8 @@ async def test_project_issue_label_comment_notification_workflows(
     )
     assert label.status_code == 201
     label_id = label.json()["id"]
+    labels = await client.get(f"/api/v1/organizations/{org_id}/labels", headers=auth_headers)
+    assert [item["id"] for item in labels.json()] == [label_id]
     assert (
         await client.put(
             f"/api/v1/organizations/{org_id}/issues/{issue_id}/labels/{label_id}",
